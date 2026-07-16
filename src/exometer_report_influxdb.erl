@@ -94,7 +94,7 @@ exometer_init(Opts) ->
                     metrics = maps:new()},
     code:load_file(hackney_tcp),
     code:load_file(hackney_ssl),
-    case connect(Protocol, Host, Port, Username, Password) of
+    case connect(Protocol, binary_to_list(Host), Port, Username, Password) of
         {ok, Connection} ->
             ?info("InfluxDB reporter connecting success: ~p", [Opts]),
             {ok, State#state{connection = Connection}};
@@ -163,7 +163,7 @@ exometer_cast(_Unknown, State) ->
 -spec exometer_info(any(), state()) -> callback_result().
 exometer_info({exometer_influxdb, reconnect}, State) ->
     reconnect(State);
-exometer_info({exometer_influxdb, send}, 
+exometer_info({exometer_influxdb, send},
               #state{collected_metrics = CollectedMetrics} = State) ->
     if size(CollectedMetrics) > 0 ->
         send(CollectedMetrics, State#state{collected_metrics = <<>>});
@@ -173,8 +173,8 @@ exometer_info(_Unknown, State) ->
     {ok, State}.
 
 -spec exometer_newentry(exometer:entry(), state()) -> callback_result().
-exometer_newentry(#exometer_entry{name = Name, type = Type} = _Entry, 
-                  #state{autosubscribe = Autosubscribe, 
+exometer_newentry(#exometer_entry{name = Name, type = Type} = _Entry,
+                  #state{autosubscribe = Autosubscribe,
                          subscriptions_module = Module} = State) ->
     case {Autosubscribe, Module} of
         {true, undefined} ->
@@ -200,23 +200,23 @@ exometer_terminate(Reason, _) ->
 %% ===================================================================
 %% Internal functions
 %% ===================================================================
--spec connect(protocol(), string() | binary(), integer(),
+-spec connect(protocol(), string(), integer(),
               undefined | iodata(), undefined | iodata()) ->
-    {ok, pid() | reference()} | {error, term()}.
+    {ok, pid() | gen_udp:socket()} | {error, term()}.
 connect(Proto, Host, Port, Username, Password) when ?HTTP(Proto) ->
     {ok, _} = application:ensure_all_started(hackney),
     Options = case {Username, Password} of
         {undefined, _} -> [];
         {_, undefined} -> [];
         _ -> [{basic_auth, {Username, Password}}]
-    end ++ [{pool, false}],
+    end ++ [{pool, influxdb_pool}],
     Transport = case Proto of
-        http -> 
+        http ->
             case code:is_loaded(hackney_tcp) of
                 false ->  hackney_tcp_transport;
                 _ -> hackney_tcp
             end;
-        https -> 
+        https ->
             case code:is_loaded(hackney_ssl) of
                false ->  hackney_ssl_transport;
                _ -> hackney_ssl
@@ -241,10 +241,21 @@ reconnect(#state{protocol = Protocol, host = Host, port = Port,
             {ok, State#state{connection = undefined}}
     end.
 
--spec close_connection(undefined | gen_udp:socket() | reference()) -> ok | {error, unsupported_protocol}.
+-spec close_connection(undefined | gen_udp:socket() | pid()) -> ok | {error, unsupported_protocol}.
 close_connection(undefined) -> ok;
-close_connection(Connection) when is_reference(Connection) ->
-    hackney:close(Connection);
+close_connection(Connection) when is_pid(Connection) ->
+    case erlang:is_process_alive(Connection) of
+        false ->
+            ok;
+        true ->
+            case hackney_conn:get_state(Connection) of
+                {ok, connected} ->
+                    hackney_conn:release_to_pool(Connection);
+                _ ->
+                    hackney:close(Connection)
+            end,
+            ok
+    end;
 close_connection(Connection) when is_port(Connection) ->
     gen_udp:close(Connection);
 close_connection(Connection) ->
@@ -302,7 +313,7 @@ send(Packet, #state{protocol = Proto, connection= Connection,
     case hackney:send_request(Connection, Req) of
         {ok, 204, _, Ref} ->
             hackney:body(Ref),
-            {ok, State};
+            reconnect(State);
         {ok, Status, _Headers, Ref} ->
             {ok, Body} = hackney:body(Ref),
             ?warning("InfluxDB reporter got unexpected response with code ~p"
@@ -345,7 +356,7 @@ subscribe({Name, DataPoint, Interval, Extra, Retry}) when is_boolean(Retry) ->
     exometer_report:subscribe(?MODULE, Name, DataPoint, Interval, Extra, Retry);
 subscribe({Name, DataPoint, Interval, Extra}) ->
     exometer_report:subscribe(?MODULE, Name, DataPoint, Interval, Extra);
-subscribe(_Name) -> 
+subscribe(_Name) ->
     [].
 
 -spec get_opt(atom(), list(), any()) -> any().
@@ -432,7 +443,7 @@ flatten_tags(Tags) ->
                 end, [], lists:keysort(1, Tags)).
 
 -spec make_packet(exometer_report:metric(), map() | list(),
-                  map(), boolean() | non_neg_integer(), precision()) -> 
+                  map(), boolean() | non_neg_integer(), precision()) ->
     list().
 make_packet(Measurement, Tags, Fields, Timestamping, Precision) ->
     BinaryTags = flatten_tags(Tags),
@@ -493,12 +504,12 @@ evaluate_subscription_options(MetricId, Options, DefaultTags, DefaultSeriesName,
     FinalTags = merge_tags(DefaultTags, TagMap),
     {FinalMetricId, FinalTags}.
 
--spec evaluate_subscription_tags(list(), [{atom(), value()}]) -> 
+-spec evaluate_subscription_tags(list(), [{atom(), value()}]) ->
     {list(), [{atom(), value()}], [integer()]}.
 evaluate_subscription_tags(MetricId, TagOpts) ->
     evaluate_subscription_tags(MetricId, TagOpts, [], []).
 
--spec evaluate_subscription_tags(list(), [{atom(), value()}], [{atom(), value()}], [integer()]) -> 
+-spec evaluate_subscription_tags(list(), [{atom(), value()}], [{atom(), value()}], [integer()]) ->
     {list(), [{atom(), value()}], [integer()]}.
 evaluate_subscription_tags(MetricId, [], TagAcc, PosAcc) ->
     {MetricId, TagAcc, PosAcc};

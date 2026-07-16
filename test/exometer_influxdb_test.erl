@@ -115,20 +115,20 @@ make_packet_with_timestamping_test() ->
 make_packet_with_integer_timestamping_test() ->
     {Name1, Tags1} = evaluate_subscription_options([a, b, c], []),
 
-    ?assertEqual(<<"a_b_c value=1i 10000">>, 
+    ?assertEqual(<<"a_b_c value=1i 10000">>,
                  make_bin_packet(Name1, Tags1, #{value => 1}, 10000, n)),
 
-    ?assertEqual(<<"a_b_c value=1i 10000">>, 
+    ?assertEqual(<<"a_b_c value=1i 10000">>,
                  make_bin_packet(Name1, Tags1, #{value => 1}, 10000, s)),
 
     ok.
 
 subscribtions_module_test() ->
     {ok, Socket} = gen_udp:open(8089),
-    Subscribers =  [ 
+    Subscribers =  [
         {reporters, [
-            {exometer_report_influxdb, [{autosubscribe, true}, 
-                                        {subscriptions_module, exometer_influxdb_subscribe_mod}, 
+            {exometer_report_influxdb, [{autosubscribe, true},
+                                        {subscriptions_module, exometer_influxdb_subscribe_mod},
                                         {protocol, udp}, {port, 8089}, {tags, [{region, ru}]}]}
         ]}],
     error_logger:tty(false),
@@ -166,7 +166,7 @@ send_udp_packet_when_it_hits_size_limit_test() ->
     {ok, State3} = maybe_send(flights, [{type, arrival}],   #{count => 2}, State2), % fits into packet - send
     {ok, State4} = maybe_send(flights, [{type, arrival}],   #{count => 1}, State3), % doesn't fit - save for later
     {ok, State5} = maybe_send(flights, [{type, arrival}],   #{count => 1}, State4), % doesn't fit - save for later
-    {ok, {_Address, _Port, Packet1}} = gen_udp:recv(ServerSocket, 0, 9999),
+    {ok, {_, _, Packet1}} = gen_udp:recv(ServerSocket, 0, 9999),
 
     ?assertEqual("flights,type=departure count=3i \n"
                  "flights,type=arrival count=2i \n", Packet1),
@@ -176,7 +176,7 @@ send_udp_packet_when_it_hits_size_limit_test() ->
 
     % Send the remaining metrics when the current batch window ends
     {ok, State6} = exometer_info({exometer_influxdb, send}, State5),
-    {ok, {_Address, _Port, Packet2}} = gen_udp:recv(ServerSocket, 0, 9999),
+    {ok, {_, _, Packet2}} = gen_udp:recv(ServerSocket, 0, 9999),
 
     ?assertEqual("flights,type=arrival count=1i \n"
                  "flights,type=arrival count=1i \n", Packet2),

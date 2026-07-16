@@ -18,6 +18,6 @@
                 metrics :: map(),
                 autosubscribe :: boolean(),
                 subscriptions_module :: module(),
-                connection :: gen_udp:socket() | reference()}).
+                connection :: gen_udp:socket() | pid()}).
 
 -type state() :: #state{}.
