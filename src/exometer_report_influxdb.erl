@@ -231,9 +231,11 @@ reconnect(#state{protocol = Protocol, host = Host, port = Port,
                  username = Username, password = Password, connection = ExistingConnection} = State) ->
     close_connection(ExistingConnection),
     case connect(Protocol, Host, Port, Username, Password) of
-        {ok, Connection} ->
+        {ok, Connection} when ExistingConnection =:= undefined ->
             ?info("InfluxDB reporter reconnecting success: ~p",
                   [{Protocol, Host, Port, Username}]),
+            {ok, State#state{connection = Connection}};
+        {ok, Connection} ->
             {ok, State#state{connection = Connection}};
         Error ->
             ?error("InfluxDB reporter reconnecting error: ~p", [Error]),
